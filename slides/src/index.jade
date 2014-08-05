@@ -1,0 +1,211 @@
+!!! 5
+html
+  head
+    meta(charset='utf-8')
+    meta(name='viewport', content='width=device-width, initial-scale=1.0')
+    title JSCube
+    link(rel='stylesheet', type='text/css', href='bower_components/prism/themes/prism-funky.css')
+    link(rel='stylesheet', type='text/css', href='ppt.css')
+
+  body
+
+    article
+      section
+        h1 Welcome.
+
+      section
+        h2 Guess What Movies You May Like
+        hr
+        ul
+          li <small>Aug. 4, 2014</small>
+          li <small>Spark Live Demo by</small>
+          li <b>Linus Yang</b> and <b>Tomas Tauber</b>
+
+      section
+        h2 A conversation...
+        hr
+        ul
+          li <b>Tomas</b>: I love to watch <i>Star Wars</i>. Any more similar movies for recommendation?
+          li <b>Linus</b>: Hmm... Maybe you can find the guys who also loves <i>Star Wars</i> and ask them.
+          li <b>Tomas</b>: Nope, I want the answer <strong>right now</strong>, but no Google.
+          li <b>Linus</b>: o_O
+
+      section
+        h2 My thoughts...
+        hr
+        ul
+          li Luckily, I have a bunch of data which saves <strong>users' ratings</strong> for some fairly old movies.
+          li But, how can I work out which one is similar with <i>Star Wars</i>?
+
+      section
+        h2 First, I should give the definition of <strong>similarity</strong> between movies.
+
+      section
+        h2 Use their <strong>correlation</strong>:
+        hr
+        ul
+          li <i>1.</i> For every pair of movies A and B, find all the people who rated <strong>both A and B</strong>.
+          li <i>2.</i> Use these ratings to form a <strong>Movie A vector</strong> and <strong>a Movie B vector</strong>.
+          li <i>3.</i> <strong>Calculate the correlation</strong> between these two vectors.
+          li <i>4.</i> Whenever someone watches a movie, then I can recommend the movies <strong>most correlated</strong> with it.
+
+      section
+        h2 Quite simple, Huh? But...
+        hr
+        ul 
+          li Too much data to import into <strong>database</strong>
+          li <strong>SQL</strong> is too complicated for this situation
+          li <strong>Hadoop</strong> is too slow and writing in Java is verbose
+
+      section
+        h1 Maybe, <strong>Spark</strong> is worth a try...
+
+      section
+        h2 And I also need to do transformation on the raw data...
+        
+      section
+        table
+          tr
+            td 1. Parse from file
+            td <code>T1(user, movie, rating)</code>
+          tr
+            td 2. Count raters by movie
+            td <code>T2(movie, numRaters)</code>
+          tr
+            td 3. Merge ratings with numRaters
+            td <code>T1 ⋈ T2 -> T3(user, movie, rating, numRaters)</code>
+          tr
+            td 4. Get rating pairs
+            td <code>T3 ⋈ T3' -> T4(movie, rating, numRaters, movie', rating', numRaters')</code>
+          tr
+            td 5. Calculate correlation
+            td <code>T4 -> T5(movie, corr)</code>
+
+      section
+        h2 Parse from file
+        hr
+        code.language-scala
+          pre.
+            // extract (userid, movieid, rating) from ratings data
+            ratings = sc.textFile(ratingFilename)
+              .map(line => {
+                val fields = line.split("\t")
+                (fields(0).toInt, 
+                 fields(1).toInt, 
+                 fields(2).toInt)
+            })
+        
+      section
+        h2 Count raters by movie
+        hr
+        code.language-scala
+          pre.
+            // get num raters per movie, 
+            // keyed on movie id as (movie, numRaters)
+            val numRatersPerMovie = ratings
+              .groupBy(tup => tup._2)
+              .map(grouped => 
+                (grouped._1, grouped._2.size))
+
+      section
+        h2 Merge ratings with numRaters
+        hr
+        code.language-scala
+          pre.
+            // join ratings with num raters on movie id
+            // ratingsWithSize now contains the following 
+            // fields: (user, movie, rating, numRaters).
+            val ratingsWithSize = ratings
+              .groupBy(tup => tup._2)
+              .join(numRatersPerMovie)
+              .flatMap(joined => {
+                joined._2._1.map(f => 
+                  (f._1, f._2, f._3, joined._2._2))
+            })
+
+      section
+        h2 Get rating pairs
+        hr
+        code.language-scala
+          pre.
+            // dummy copy of ratings for self join
+            val ratings2 = ratingsWithSize.
+              keyBy(tup => tup._1)
+
+            // join on userid and filter movie pairs such that 
+            // we don't double-count and exclude self-pairs
+            val ratingPairs =
+              ratingsWithSize
+              .keyBy(tup => tup._1)
+              .join(ratings2)
+              .filter(f => f._2._1._2 < f._2._2._2)
+
+      section
+        h2 Calculate correlation
+        hr
+        code.language-scala
+          pre.
+            similarities = ratingPairs
+              .map(data => {
+                val key = (data._2._1._2, data._2._2._2)
+                val stats =
+                  (data._2._1._4,                // number of raters movie 1
+                   data._2._2._4)                // number of raters movie 2
+                (key, stats)
+              })
+              .groupByKey()
+              .map(data => {
+                val key = data._1
+                val vals = data._2
+                val size = vals.size
+                val numRaters = vals.map(f => f._1).max
+                val numRaters2 = vals.map(f => f._2).max
+                // The Jaccard Similarity between two sets A, B is
+                //   |Intersection(A, B)| / |Union(A, B)|
+                val corr = jaccard(size, numRaters, numRaters2)
+                (key, corr)
+              })
+
+      section
+        h2 Finally, we can print the result...
+
+      section
+        h1 <i>Demo</i>
+        ul
+          li <small>*</small>In the interest of time, I will only run several functions containing steps above.
+
+      section
+        ul
+          li <b>Linus</b>: I found it.
+          li <b>Tomas</b>: Good work. So what about <i>Toy Story</i>?
+          li <b>Linus</b>: O_o
+
+      section
+        h2 References
+        h2 This demo is based Edwin Chen and Nick Pentreath's blog.
+        hr
+        p Movie recommendations and more via MapReduce and Scalding. <span class="refurl">http://blog.echen.me/2012/02/09/movie-recommendations-and-more-via-mapreduce-and-scalding/</span>
+        p Movie Recommendations and More With Spark. <span class="refurl">http://mlnick.github.io/blog/2013/04/01/movie-recommendations-and-more-with-spark/</span>
+
+      section
+        h2 Open-sourced on Github
+        h2 <a href="https://github.com/linusyang/sparkdemo/" target="_blank">github.com/linusyang/sparkdemo</a>
+        hr
+        ul
+          li Slides at <a href="https://linusyang.github.io/sparkdemo/" target="_blank">linusyang.github.io/sparkdemo</a>
+          li Also open-sourced on Github
+
+      section
+        h2 Any questions?
+
+      section
+        h2 Thanks :)
+
+    script(src='bower_components/bespoke.js/dist/bespoke.min.js')
+    script(src='bower_components/bespoke-bullets/dist/bespoke-bullets.min.js')
+    script(src='bower_components/bespoke-hash/dist/bespoke-hash.min.js')
+    script(src='bower_components/bespoke-state/dist/bespoke-state.min.js')
+    script(src='bower_components/prism/prism.js')
+    script(src='bower_components/prism/components/prism-java.min.js')
+    script(src='bower_components/prism/components/prism-scala.min.js')
+    script(src='ppt.js')

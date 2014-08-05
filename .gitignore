@@ -1,0 +1,7 @@
+*.DS_Store
+*.swp
+*.log
+project/
+target/*
+!target/scala-2.10/
+slides/node_modules/

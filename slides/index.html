@@ -1,0 +1,56 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>JSCube</title><link rel="stylesheet" type="text/css" href="bower_components/prism/themes/prism-funky.css"><link rel="stylesheet" type="text/css" href="ppt.css"></head><body><article><section><h1>Welcome.</h1></section><section><h2>Guess What Movies You May Like</h2><hr><ul><li><small>Aug. 4, 2014</small></li><li><small>Spark Live Demo by</small></li><li><b>Linus Yang</b> and <b>Tomas Tauber</b></li></ul></section><section><h2>A conversation...</h2><hr><ul><li><b>Tomas</b>: I love to watch <i>Star Wars</i>. Any more similar movies for recommendation?</li><li><b>Linus</b>: Hmm... Maybe you can find the guys who also loves <i>Star Wars</i> and ask them.</li><li><b>Tomas</b>: Nope, I want the answer <strong>right now</strong>, but no Google.</li><li><b>Linus</b>: o_O</li></ul></section><section><h2>My thoughts...</h2><hr><ul><li>Luckily, I have a bunch of data which saves <strong>users' ratings</strong> for some fairly old movies.</li><li>But, how can I work out which one is similar with <i>Star Wars</i>?</li></ul></section><section><h2>First, I should give the definition of <strong>similarity</strong> between movies.</h2></section><section><h2>Use their <strong>correlation</strong>:</h2><hr><ul><li><i>1.</i> For every pair of movies A and B, find all the people who rated <strong>both A and B</strong>.</li><li><i>2.</i> Use these ratings to form a <strong>Movie A vector</strong> and <strong>a Movie B vector</strong>.</li><li><i>3.</i> <strong>Calculate the correlation</strong> between these two vectors.</li><li><i>4.</i> Whenever someone watches a movie, then I can recommend the movies <strong>most correlated</strong> with it.</li></ul></section><section><h2>Quite simple, Huh? But...</h2><hr><ul> <li>Too much data to import into <strong>database</strong></li><li><strong>SQL</strong> is too complicated for this situation</li><li><strong>Hadoop</strong> is too slow and writing in Java is verbose</li></ul></section><section><h1>Maybe, <strong>Spark</strong> is worth a try...</h1></section><section><h2>And I also need to do transformation on the raw data...</h2></section><section><table><tr><td>1. Parse from file</td><td><code>T1(user, movie, rating)</code></td></tr><tr><td>2. Count raters by movie</td><td><code>T2(movie, numRaters)</code></td></tr><tr><td>3. Merge ratings with numRaters</td><td><code>T1 ⋈ T2 -> T3(user, movie, rating, numRaters)</code></td></tr><tr><td>4. Get rating pairs</td><td><code>T3 ⋈ T3' -> T4(movie, rating, numRaters, movie', rating', numRaters')</code></td></tr><tr><td>5. Calculate correlation</td><td><code>T4 -> T5(movie, corr)</code></td></tr></table></section><section><h2>Parse from file</h2><hr><code class="language-scala"><pre>// extract (userid, movieid, rating) from ratings data
+ratings = sc.textFile(ratingFilename)
+  .map(line =&gt; {
+    val fields = line.split(&quot;\t&quot;)
+    (fields(0).toInt, 
+     fields(1).toInt, 
+     fields(2).toInt)
+})
+</pre></code></section><section><h2>Count raters by movie</h2><hr><code class="language-scala"><pre>// get num raters per movie, 
+// keyed on movie id as (movie, numRaters)
+val numRatersPerMovie = ratings
+  .groupBy(tup =&gt; tup._2)
+  .map(grouped =&gt; 
+    (grouped._1, grouped._2.size))
+    </pre></code></section><section><h2>Merge ratings with numRaters</h2><hr><code class="language-scala"><pre>// join ratings with num raters on movie id
+// ratingsWithSize now contains the following 
+// fields: (user, movie, rating, numRaters).
+val ratingsWithSize = ratings
+  .groupBy(tup =&gt; tup._2)
+  .join(numRatersPerMovie)
+  .flatMap(joined =&gt; {
+    joined._2._1.map(f =&gt; 
+      (f._1, f._2, f._3, joined._2._2))
+})
+</pre></code></section><section><h2>Get rating pairs</h2><hr><code class="language-scala"><pre>// dummy copy of ratings for self join
+val ratings2 = ratingsWithSize.
+  keyBy(tup =&gt; tup._1)
+  
+// join on userid and filter movie pairs such that 
+// we don't double-count and exclude self-pairs
+val ratingPairs =
+  ratingsWithSize
+  .keyBy(tup =&gt; tup._1)
+  .join(ratings2)
+  .filter(f =&gt; f._2._1._2 &lt; f._2._2._2)
+  </pre></code></section><section><h2>Calculate correlation</h2><hr><code class="language-scala"><pre>similarities = ratingPairs
+  .map(data =&gt; {
+    val key = (data._2._1._2, data._2._2._2)
+    val stats =
+      (data._2._1._4,                // number of raters movie 1
+       data._2._2._4)                // number of raters movie 2
+    (key, stats)
+  })
+  .groupByKey()
+  .map(data =&gt; {
+    val key = data._1
+    val vals = data._2
+    val size = vals.size
+    val numRaters = vals.map(f =&gt; f._1).max
+    val numRaters2 = vals.map(f =&gt; f._2).max
+    // The Jaccard Similarity between two sets A, B is
+    //   |Intersection(A, B)| / |Union(A, B)|
+    val corr = jaccard(size, numRaters, numRaters2)
+    (key, corr)
+  })
+  </pre></code></section><section><h2>Finally, we can print the result...</h2></section><section><h1><i>Demo</i></h1><ul><li><small>*</small>In the interest of time, I will only run several functions containing steps above.</li></ul></section><section><ul><li><b>Linus</b>: I found it.</li><li><b>Tomas</b>: Good work. So what about <i>Toy Story</i>?</li><li><b>Linus</b>: O_o</li></ul></section><section><h2>References</h2><h2>This demo is based Edwin Chen and Nick Pentreath's blog.</h2><hr><p>Movie recommendations and more via MapReduce and Scalding. <span class="refurl">http://blog.echen.me/2012/02/09/movie-recommendations-and-more-via-mapreduce-and-scalding/</span></p><p>Movie Recommendations and More With Spark. <span class="refurl">http://mlnick.github.io/blog/2013/04/01/movie-recommendations-and-more-with-spark/</span></p></section><section><h2>Open-sourced on Github</h2><h2><a href="https://github.com/linusyang/sparkdemo/" target="_blank">github.com/linusyang/sparkdemo</a></h2><hr><ul><li>Slides at <a href="https://linusyang.github.io/sparkdemo/" target="_blank">linusyang.github.io/sparkdemo</a></li><li>Also open-sourced on Github</li></ul></section><section><h2>Any questions?</h2></section><section><h2>Thanks :)</h2></section></article><script src="bower_components/bespoke.js/dist/bespoke.min.js"></script><script src="bower_components/bespoke-bullets/dist/bespoke-bullets.min.js"></script><script src="bower_components/bespoke-hash/dist/bespoke-hash.min.js"></script><script src="bower_components/bespoke-state/dist/bespoke-state.min.js"></script><script src="bower_components/prism/prism.js"></script><script src="bower_components/prism/components/prism-java.min.js"></script><script src="bower_components/prism/components/prism-scala.min.js"></script><script src="ppt.js"></script></body></html>
