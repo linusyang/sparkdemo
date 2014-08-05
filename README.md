@@ -17,11 +17,7 @@ Usage
 -----
 1. Install the latest [Spark](https://spark.apache.org/downloads.html) releases on your node. And if you need to build the Scala code, you need to install [sbt](http://www.scala-sbt.org/).
 2. Setup your Spark cluster by [this tutorial](https://spark.apache.org/docs/latest/cluster-overview.html) (_[Standalone mode](https://spark.apache.org/docs/latest/spark-standalone.html) is recommended_).
-3. Clone this repository on __every node__ of your Spark cluster __at the same location__ by running the following commands:
-```bash
-git clone https://github.com/linusyang/sparkdemo.git
-cd sparkdemo/
-``` 
+3. Clone this repository on __every node__ of your Spark cluster __at the same location__ by running `git clone https://github.com/linusyang/sparkdemo.git && cd sparkdemo/`.
 4. Setup the configuration by editing the `Makefile` (_you should have the `make` utility first_):
 	* `SPARK_HOME`: Directory where Spark is installed
 	* `SPARK_MASTER`: URL (`spark://`) of Spark master node
